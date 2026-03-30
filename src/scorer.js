@@ -2,7 +2,7 @@
 // SCORER — AI scoring via Claude API
 // ============================================
 
-import Anthropic from '@anthropic-ai/sdk';
+import { getClient, isDemoMode, MODEL } from './utils/claude.js';
 import { logger } from './logger.js';
 
 const SYSTEM_PROMPT = `You are a Malaysian stock market analyst specializing in Bursa Malaysia dividend announcement plays.
@@ -34,12 +34,10 @@ SCORING CRITERIA (0-10):
    - Unexpected, higher than usual, or first-time dividend = bonus point
 
 HARD RULES — these override scoring:
-- Dividend below 1 sen per share → MAX score 3, verdict SKIP (too small to generate excitement)
+- Dividend below 1 sen per share → MAX score 3, verdict SKIP
 - Unknown micro-cap, no retail following → MAX score 4
 - Dividend yield below 2% of share price → penalize heavily
-- Score 7-10 = BUY (high FOMO probability)
-- Score 4-6 = WATCH (possible play, assess manually)  
-- Score 0-3 = SKIP (not worth the risk)
+- Score 7-10 = BUY | Score 4-6 = WATCH | Score 0-3 = SKIP
 
 Respond ONLY in this exact JSON format, no markdown, no preamble:
 {
@@ -57,28 +55,8 @@ Respond ONLY in this exact JSON format, no markdown, no preamble:
   "suggested_exit": "Before ex-date on DD MMM YY"
 }`;
 
-// ── Demo mode helpers ─────────────────────────────────────────────────────────
-function isDemoMode() {
-  const apiKey = process.env.ANTHROPIC_API_KEY;
-  if (process.env.DEMO_MODE !== undefined && process.env.DEMO_MODE !== '') {
-    return process.env.DEMO_MODE === 'true';
-  }
-  return !apiKey?.trim() || apiKey.includes('xxxxxxxx');
-}
-
-function getClient() {
-  if (isDemoMode()) return null;
-  const apiKey = process.env.ANTHROPIC_API_KEY?.trim();
-  if (!apiKey) return null;
-  try {
-    return new Anthropic({ apiKey });
-  } catch (err) {
-    logger.error('Failed to initialize Anthropic client:', err.message);
-    return null;
-  }
-}
-
 // ── Demo scores ───────────────────────────────────────────────────────────────
+
 const DEMO_SCORES = {
   'MAYBANK': {
     score: 9, verdict: 'BUY',
@@ -128,21 +106,21 @@ const DEFAULT_DEMO = {
 };
 
 // ── Main scorer ───────────────────────────────────────────────────────────────
+
 export async function scoreAnnouncement(ann) {
   if (isDemoMode()) {
-    logger.info(`📊 DEMO MODE: Scoring ${ann.ticker}...`);
+    logger.info(`[Scorer] DEMO MODE: Scoring ${ann.ticker}...`);
     return DEMO_SCORES[ann.ticker] ?? DEFAULT_DEMO;
   }
 
   const client = getClient();
   if (!client) {
-    logger.error(`No valid API key — skipping ${ann.ticker}`);
+    logger.error(`[Scorer] No valid API key — skipping ${ann.ticker}`);
     return { score: 0, verdict: 'ERROR', reason: 'API not configured', risk: 'Unknown', suggestedHold: 'N/A' };
   }
 
   try {
-    const prompt = `
-Announcement details:
+    const prompt = `Announcement details:
 - Ticker: ${ann.ticker}
 - Company: ${ann.company}
 - Subject: ${ann.subject}
@@ -153,36 +131,33 @@ Announcement details:
 - Type: ${ann.type ?? 'N/A'}
 - URL: ${ann.url}
 
-Score this for retail FOMO probability and 5% price pop within 1-3 days.
-`;
+Score this for retail FOMO probability and 5% price pop within 1-3 days.`;
 
     const response = await client.messages.create({
-      model: 'claude-sonnet-4-6',
+      model: MODEL,
       max_tokens: 500,
       system: SYSTEM_PROMPT,
       messages: [{ role: 'user', content: prompt }],
     });
 
-    const text = response.content[0].text.trim();
-    const parsed = JSON.parse(text);
+    const parsed = JSON.parse(response.content[0].text.trim());
 
     return {
-      score:          parsed.score ?? 0,
-      verdict:        parsed.verdict ?? 'SKIP',
-      dividendYield:  parsed.dividend_yield_est ?? 'N/A',
+      score:           parsed.score ?? 0,
+      verdict:         parsed.verdict ?? 'SKIP',
+      dividendYield:   parsed.dividend_yield_est ?? 'N/A',
       dpsToPriceRatio: parsed.dps_to_price_ratio ?? 'N/A',
-      fomoMagnitude:  parsed.fomo_magnitude ?? 'N/A',
-      companyProfile: parsed.company_profile ?? 'N/A',
-      timingUrgency:  parsed.timing_urgency ?? 'N/A',
-      surpriseFactor: parsed.surprise_factor ?? 'N/A',
-      reason:         parsed.reason ?? '',
-      risk:           parsed.risk ?? '',
-      suggestedHold:  parsed.suggested_hold ?? '1-3 days',
-      suggestedExit:  parsed.suggested_exit ?? 'Before ex-date',
+      fomoMagnitude:   parsed.fomo_magnitude ?? 'N/A',
+      companyProfile:  parsed.company_profile ?? 'N/A',
+      timingUrgency:   parsed.timing_urgency ?? 'N/A',
+      surpriseFactor:  parsed.surprise_factor ?? 'N/A',
+      reason:          parsed.reason ?? '',
+      risk:            parsed.risk ?? '',
+      suggestedHold:   parsed.suggested_hold ?? '1-3 days',
+      suggestedExit:   parsed.suggested_exit ?? 'Before ex-date',
     };
-
   } catch (err) {
-    logger.error(`Scoring failed for ${ann.ticker}:`, err.message);
+    logger.error(`[Scorer] Failed for ${ann.ticker}:`, err.message);
     return { score: 0, verdict: 'ERROR', reason: 'Scoring failed', risk: 'Unknown', suggestedHold: 'N/A' };
   }
 }

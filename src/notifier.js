@@ -65,30 +65,30 @@ export async function sendTelegramAlert(ann, result) {
   const message = `
 📢 *BURSA DIVIDEND — NEW ANNOUNCEMENT*
 ━━━━━━━━━━━━━━━━━━━━
-📌 *${ann.ticker}* — ${ann.company}
-📋 ${ann.subject}
-📅 Ann: ${ann.date} | Ex\\-Date: ${ann.exDate ?? 'TBC'}
-💵 Dividend: *${ann.dividendCent ?? 'N/A'} sen*
+📌 *${escMd(ann.ticker)}* — ${escMd(ann.company)}
+📋 ${escMd(ann.subject)}
+📅 Ann: ${escMd(ann.date)} \\| Ex\\-Date: ${escMd(ann.exDate ?? 'TBC')}
+💵 Dividend: *${escMd(ann.dividendCent ?? 'N/A')} sen*
 ━━━━━━━━━━━━━━━━━━━━
 *🤖 AI FOMO ANALYSIS*
 ${verdictLine}
-📊 Score: ${scoreBar} *${result.score}/10*
+📊 Score: ${scoreBar} *${escMd(result.score)}/10*
 
 🔥 *FOMO Magnitude*
-${result.fomoMagnitude ?? 'N/A'}
+${escMd(result.fomoMagnitude ?? 'N/A')}
 
 🏢 *Company Profile*
-${result.companyProfile ?? 'N/A'}
+${escMd(result.companyProfile ?? 'N/A')}
 
 ⏰ *Timing Urgency*
-${result.timingUrgency ?? 'N/A'}
+${escMd(result.timingUrgency ?? 'N/A')}
 
 😲 *Surprise Factor*
-${result.surpriseFactor ?? 'N/A'}
+${escMd(result.surpriseFactor ?? 'N/A')}
 ━━━━━━━━━━━━━━━━━━━━
-✅ *Why play:* ${result.reason}
-⚠️ *Risk:* ${result.risk}
-🚪 *Exit:* ${result.suggestedExit ?? 'Before ex\\-date'}
+✅ *Why play:* ${escMd(result.reason)}
+⚠️ *Risk:* ${escMd(result.risk)}
+🚪 *Exit:* ${escMd(result.suggestedExit ?? 'Before ex-date')}
 ━━━━━━━━━━━━━━━━━━━━
 🔗 [View on i3investor](${ann.url})
   `.trim();
@@ -107,6 +107,10 @@ ${result.surpriseFactor ?? 'N/A'}
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
+function escMd(text) {
+  return String(text ?? '').replace(/[_*[\]()~`>#+=|{}.!\\-]/g, '\\$&');
+}
+
 function buildVerdictLine(score) {
   if (score >= 7) return '🟢 *GO* — High FOMO probability';
   if (score >= 4) return '🟡 *WATCH* — Moderate, your call';
@@ -132,3 +136,6 @@ function printToConsole(ann, result) {
   console.log(`🔗 ${ann.url}`);
   console.log('='.repeat(50) + '\n');
 }
+
+
+export { getBot };
