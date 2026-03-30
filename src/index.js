@@ -16,12 +16,10 @@ import { loadSeen, saveSeen } from './store.js';
 import { logger } from './logger.js';
 
 // Check if running in demo mode
-// Respect explicit DEMO_MODE setting
 let DEMO_MODE;
 if (process.env.DEMO_MODE !== undefined && process.env.DEMO_MODE !== '') {
   DEMO_MODE = process.env.DEMO_MODE === 'true';
 } else {
-  // Auto-detect: demo mode if no valid API key
   DEMO_MODE = !process.env.ANTHROPIC_API_KEY || process.env.ANTHROPIC_API_KEY.includes('xxxxxxxx');
 }
 
@@ -39,17 +37,13 @@ async function runAgent() {
     for (const ann of newOnes) {
       seen.add(ann.id);
 
-      // AI scoring — returns { score, verdict, reason }
+      // AI scoring — full FOMO analysis
       const result = await scoreAnnouncement(ann);
 
       logger.info(`[${ann.ticker}] Score: ${result.score}/10 — ${result.verdict}`);
 
-      // Only notify if score >= threshold (configurable)
-      const threshold = parseInt(process.env.SCORE_THRESHOLD ?? '6');
-      if (result.score >= threshold) {
-        await sendTelegramAlert(ann, result);
-        logger.info(`✅ Alert sent for ${ann.ticker}`);
-      }
+      // Notify ALL announcements — AI explains, you decide GO or NO GO
+      await sendTelegramAlert(ann, result);
     }
 
     await saveSeen(seen);
@@ -60,18 +54,16 @@ async function runAgent() {
 }
 
 // ── Schedule ──────────────────────────────────────────────────────────────────
-// Run every 5 mins, Mon-Fri, 9am-5:30pm KL time
-// Adjust cron expression as needed
 const CRON_SCHEDULE = process.env.CRON_SCHEDULE ?? '*/5 9-17 * * 1-5';
 
 logger.info(`🤖 Bursa Dividend Agent started`);
 logger.info(`📅 Schedule: ${CRON_SCHEDULE}`);
-logger.info(`🎯 Score threshold: ${process.env.SCORE_THRESHOLD ?? '6'}/10`);
+logger.info(`📢 Mode: Notify ALL — AI explains, you decide`);
 if (DEMO_MODE) {
   logger.info(`🎭 DEMO MODE: Using simulated scores (set valid ANTHROPIC_API_KEY to use real AI scoring)`);
 }
 
-// Test Telegram connection on startup (non-blocking)
+// Test Telegram on startup
 try {
   await testTelegram();
 } catch (err) {
