@@ -66,7 +66,71 @@ async function crawlKlseNews() {
   return items;
 }
 
-// ── Step 2: Extract stock codes from headlines (Claude pass 1) ────────────────
+// ── Step 2: Normalise headlines — translate Chinese, keep EN + BM ─────────────
+
+function isChinese(text) {
+  return /[\u4e00-\u9fff]/.test(text);
+}
+
+async function normaliseHeadlines(newsItems) {
+  const client = getClient();
+
+  // Split into chinese and non-chinese
+  const chineseItems  = newsItems.filter(n => isChinese(n.title));
+  const nonChinese    = newsItems.filter(n => !isChinese(n.title));
+
+  if (chineseItems.length === 0) return newsItems;
+  if (!client) {
+    // No client — just drop Chinese items
+    logger.warn('[FOMO] No API key — dropping Chinese headlines');
+    return nonChinese;
+  }
+
+  // Batch translate Chinese headlines in one Claude call
+  const toTranslate = chineseItems
+    .map((n, i) => `${i + 1}. ${n.title}`)
+    .join('\n');
+
+  try {
+    const response = await client.messages.create({
+      model: MODEL,
+      max_tokens: 800,
+      messages: [{
+        role: 'user',
+        content: `Translate these Bursa Malaysia news headlines from Chinese to English. Keep stock names, company names and financial terms accurate. Be concise — one line per headline.
+
+${toTranslate}
+
+Respond ONLY in this JSON format (no markdown):
+{
+  "translations": [
+    { "index": 1, "title": "<translated headline>" }
+  ]
+}`,
+      }],
+    });
+
+    const parsed = JSON.parse(response.content[0].text.trim());
+    const map    = {};
+    for (const t of parsed.translations ?? []) map[t.index] = t.title;
+
+    // Apply translations back to Chinese items
+    const translated = chineseItems.map((n, i) => ({
+      ...n,
+      title:       map[i + 1] ?? n.title,
+      originalTitle: n.title,
+    }));
+
+    logger.info(`[FOMO] Translated ${translated.length} Chinese headlines`);
+    return [...nonChinese, ...translated];
+
+  } catch (err) {
+    logger.warn('[FOMO] Translation failed — dropping Chinese headlines:', err.message);
+    return nonChinese;
+  }
+}
+
+// ── Step 3: Extract stock codes from headlines (Claude pass 2) ────────────────
 
 async function extractStockCodes(newsItems) {
   if (isDemoMode()) return {};
@@ -114,7 +178,7 @@ If no stock is identifiable for a headline, skip it entirely.`,
   }
 }
 
-// ── Step 3: Fetch stock data from KLSE Screener ───────────────────────────────
+// ── Step 4: Fetch stock data from KLSE Screener ───────────────────────────────
 
 async function fetchStockData(stockCode) {
   try {
@@ -153,7 +217,7 @@ async function fetchStockData(stockCode) {
   }
 }
 
-// ── Step 4: Claude FOMO analysis with enriched data (Claude pass 2) ───────────
+// ── Step 5: Claude FOMO analysis with enriched data (Claude pass 3) ───────────
 
 async function analyseBatch(newsItems, stockCodeMap, stockDataMap) {
   const client = getClient();
@@ -305,12 +369,16 @@ export async function runFomoCrawl() {
       return;
     }
 
-    // 2. Extract stock codes from headlines (Claude pass 1 — cheap)
-    const stockCodeMap = await extractStockCodes(newsItems);
+    // 2. Translate Chinese headlines, keep EN + BM
+    const normalisedItems = await normaliseHeadlines(newsItems);
+    logger.info(`[FOMO] After normalisation: ${normalisedItems.length} items`);
+
+    // 3. Extract stock codes (Claude pass 2 — cheap)
+    const stockCodeMap = await extractStockCodes(normalisedItems);
     const uniqueCodes  = [...new Set(Object.values(stockCodeMap))];
     logger.info(`[FOMO] Identified ${uniqueCodes.length} stocks: ${uniqueCodes.join(', ')}`);
 
-    // 3. Fetch stock data for identified stocks (parallel)
+    // 4. Fetch stock data (parallel)
     const stockDataMap = {};
     await Promise.allSettled(
       uniqueCodes.map(async (code) => {
@@ -320,18 +388,18 @@ export async function runFomoCrawl() {
     );
     logger.info(`[FOMO] Stock data fetched for ${Object.keys(stockDataMap).length} stocks`);
 
-    // 4. Full FOMO analysis with enriched data (Claude pass 2)
-    const analysis = await analyseBatch(newsItems, stockCodeMap, stockDataMap);
+    // 5. Full FOMO analysis with enriched data (Claude pass 3)
+    const analysis = await analyseBatch(normalisedItems, stockCodeMap, stockDataMap);
 
-    // 5. Format and send
-    const message = formatDigest(analysis, newsItems);
+    // 6. Format and send
+    const message = formatDigest(analysis, normalisedItems);
     if (!message) {
       logger.info('[FOMO] No FOMO picks this cycle — nothing sent.');
     } else {
       await sendDigest(message);
     }
 
-    // 6. Mark all as seen
+    // 7. Mark all original items as seen
     newsItems.forEach(n => seenItems.add(n.id));
 
     // Trim cache to avoid memory bloat
