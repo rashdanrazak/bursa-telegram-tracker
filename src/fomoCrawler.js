@@ -178,41 +178,74 @@ If no stock is identifiable for a headline, skip it entirely.`,
   }
 }
 
-// ── Step 4: Fetch stock data from KLSE Screener ───────────────────────────────
+// ── Step 4: Fetch stock data via Yahoo Finance ────────────────────────────────
+// Bursa stocks on Yahoo use numeric code e.g. 7113.KL, not TOPGLOV.KL
+// We use Yahoo search API to resolve ticker → correct symbol first
 
-async function fetchStockData(stockCode) {
+const yahooSymbolCache = new Map();
+
+async function resolveYahooSymbol(ticker) {
+  if (yahooSymbolCache.has(ticker)) return yahooSymbolCache.get(ticker);
+
   try {
-    const res = await axios.get(`https://www.klsescreener.com/v2/stocks/${stockCode.toLowerCase()}`, {
-      headers: HEADERS,
+    const res = await axios.get('https://query1.finance.yahoo.com/v1/finance/search', {
+      params: { q: `${ticker} Bursa Malaysia`, lang: 'en-US', region: 'MY', quotesCount: 3 },
+      headers: { 'User-Agent': HEADERS['User-Agent'] },
+      timeout: 6000,
+    });
+
+    const quotes = res.data?.quotes ?? [];
+    // Find first result with .KL suffix — that's a Bursa stock
+    const match = quotes.find(q => q.symbol?.endsWith('.KL') && q.exchange === 'KLS');
+    const symbol = match?.symbol ?? null;
+
+    if (symbol) yahooSymbolCache.set(ticker, symbol);
+    return symbol;
+  } catch {
+    return null;
+  }
+}
+
+async function fetchStockData(ticker) {
+  try {
+    // Resolve to correct Yahoo symbol e.g. 7113.KL
+    const symbol = await resolveYahooSymbol(ticker);
+    if (!symbol) {
+      logger.warn(`[FOMO] Could not resolve Yahoo symbol for ${ticker}`);
+      return null;
+    }
+
+    const url = `https://query1.finance.yahoo.com/v8/finance/chart/${symbol}?interval=1d&range=1y`;
+    const res = await axios.get(url, {
+      headers: { 'User-Agent': HEADERS['User-Agent'] },
       timeout: 8000,
     });
 
-    const $ = cheerio.load(res.data);
+    const result = res.data?.chart?.result?.[0];
+    if (!result) return null;
 
-    // Helpers to find value by label
-    const findVal = (label) => {
-      let val = '';
-      $('td, th, .label, .value, span').each((_, el) => {
-        const text = $(el).text().trim();
-        if (text.toLowerCase().includes(label.toLowerCase())) {
-          const next = $(el).next();
-          if (next.length) val = next.text().trim();
-        }
-      });
-      return val || 'N/A';
-    };
+    const meta   = result.meta ?? {};
+    const price  = meta.regularMarketPrice ?? null;
+    const prev   = meta.chartPreviousClose ?? meta.previousClose ?? null;
+    const change = price && prev
+      ? `${((price - prev) / prev * 100).toFixed(2)}%`
+      : 'N/A';
+
+    const closes   = result.indicators?.quote?.[0]?.close?.filter(Boolean) ?? [];
+    const weekHigh = closes.length ? Math.max(...closes).toFixed(2) : null;
+    const weekLow  = closes.length ? Math.min(...closes).toFixed(2) : null;
 
     return {
-      price:    findVal('price') || findVal('last'),
-      change:   findVal('change') || findVal('chg'),
-      pe:       findVal('p/e') || findVal('pe ratio'),
-      weekHigh: findVal('52') || findVal('week high'),
-      weekLow:  findVal('52 week low') || findVal('low'),
-      volume:   findVal('volume') || findVal('vol'),
-      avgVol:   findVal('avg vol') || findVal('average volume'),
+      price:    price    ? `RM${price}`    : 'N/A',
+      change,
+      pe:       meta.trailingPE            ? meta.trailingPE.toFixed(1)                    : 'N/A',
+      weekHigh: weekHigh ? `RM${weekHigh}` : 'N/A',
+      weekLow:  weekLow  ? `RM${weekLow}`  : 'N/A',
+      volume:   meta.regularMarketVolume?.toLocaleString()      ?? 'N/A',
+      avgVol:   meta.averageDailyVolume3Month?.toLocaleString() ?? 'N/A',
     };
   } catch (err) {
-    logger.warn(`[FOMO] Stock data fetch failed for ${stockCode}:`, err.message);
+    logger.warn(`[FOMO] Stock data fetch failed for ${ticker}:`, err.message);
     return null;
   }
 }
