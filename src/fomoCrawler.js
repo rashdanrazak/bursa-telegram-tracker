@@ -145,7 +145,7 @@ async function extractStockCodes(newsItems) {
   try {
     const response = await client.messages.create({
       model: MODEL,
-      max_tokens: 500,
+      max_tokens: 1000,
       messages: [{
         role: 'user',
         content: `Extract Bursa Malaysia stock codes from these headlines. Only include stocks you're confident about.
@@ -153,7 +153,7 @@ async function extractStockCodes(newsItems) {
 Headlines:
 ${headlines}
 
-Respond ONLY in this JSON format (no markdown):
+Respond ONLY in this JSON format (no markdown, no extra text):
 {
   "stocks": [
     { "index": 1, "code": "MAYBANK" },
@@ -165,8 +165,10 @@ If no stock is identifiable for a headline, skip it entirely.`,
       }],
     });
 
-    const parsed = JSON.parse(response.content[0].text.trim());
-    // Map: index -> stock code
+    // Strip markdown fences if any, then parse
+    const raw   = response.content[0].text.trim().replace(/```json|```/g, '').trim();
+    const parsed = JSON.parse(raw);
+
     const map = {};
     for (const s of parsed.stocks ?? []) {
       map[s.index] = s.code;
@@ -178,18 +180,14 @@ If no stock is identifiable for a headline, skip it entirely.`,
   }
 }
 
-// ── Step 4: Fetch stock data via Yahoo Finance (Optional Enrichment) ─────────
+// ── Step 4: Fetch stock data via Yahoo Finance ────────────────────────────────
 // Bursa stocks on Yahoo use numeric code e.g. 7113.KL, not TOPGLOV.KL
 // We use Yahoo search API to resolve ticker → correct symbol first
-// If resolution fails, gracefully continues without price data (common for newer/delisted stocks)
-// TODO: Future improvement — integrate Bursa Malaysia API for reliable local data
 
 const yahooSymbolCache = new Map();
-const yahooFailureCache = new Set(); // Track failed lookups to avoid repeated API calls
 
 async function resolveYahooSymbol(ticker) {
   if (yahooSymbolCache.has(ticker)) return yahooSymbolCache.get(ticker);
-  if (yahooFailureCache.has(ticker)) return null; // Skip already-failed lookups
 
   try {
     const res = await axios.get('https://query1.finance.yahoo.com/v1/finance/search', {
@@ -203,25 +201,20 @@ async function resolveYahooSymbol(ticker) {
     const match = quotes.find(q => q.symbol?.endsWith('.KL') && q.exchange === 'KLS');
     const symbol = match?.symbol ?? null;
 
-    if (symbol) {
-      yahooSymbolCache.set(ticker, symbol);
-    } else {
-      yahooFailureCache.add(ticker);
-    }
+    if (symbol) yahooSymbolCache.set(ticker, symbol);
     return symbol;
   } catch {
-    yahooFailureCache.add(ticker);
     return null;
   }
 }
 
 async function fetchStockData(ticker) {
   try {
-    // Attempt to resolve to correct Yahoo symbol e.g. 7113.KL
-    // If unavailable, returns null gracefully (stock will be included in FOMO analysis without price data)
+    // Resolve to correct Yahoo symbol e.g. 7113.KL
     const symbol = await resolveYahooSymbol(ticker);
     if (!symbol) {
-      return null; // Graceful degradation — continue without price enrichment
+      logger.warn(`[FOMO] Could not resolve Yahoo symbol for ${ticker}`);
+      return null;
     }
 
     const url = `https://query1.finance.yahoo.com/v8/finance/chart/${symbol}?interval=1d&range=1y`;
@@ -254,7 +247,7 @@ async function fetchStockData(ticker) {
       avgVol:   meta.averageDailyVolume3Month?.toLocaleString() ?? 'N/A',
     };
   } catch (err) {
-    // Silently ignore fetch errors — not critical to core functionality
+    logger.warn(`[FOMO] Stock data fetch failed for ${ticker}:`, err.message);
     return null;
   }
 }
