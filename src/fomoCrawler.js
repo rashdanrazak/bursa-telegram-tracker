@@ -9,6 +9,7 @@ import { getClient, isDemoMode, MODEL } from './utils/claude.js';
 import { HEADERS } from './scraper.js';
 import { getBot } from './notifier.js';
 import { logger } from './logger.js';
+import { getYahooSymbol } from './bursa-lookup.js';
 
 // Dedup — track news IDs already processed
 const seenItems = new Set();
@@ -182,30 +183,10 @@ If no stock is identifiable for a headline, skip it entirely.`,
 
 // ── Step 4: Fetch stock data via Yahoo Finance ────────────────────────────────
 // Bursa stocks on Yahoo use numeric code e.g. 7113.KL, not TOPGLOV.KL
-// We use Yahoo search API to resolve ticker → correct symbol first
-
-const yahooSymbolCache = new Map();
+// We fetch security code from Bursa Malaysia, then convert to Yahoo symbol
 
 async function resolveYahooSymbol(ticker) {
-  if (yahooSymbolCache.has(ticker)) return yahooSymbolCache.get(ticker);
-
-  try {
-    const res = await axios.get('https://query1.finance.yahoo.com/v1/finance/search', {
-      params: { q: `${ticker} Bursa Malaysia`, lang: 'en-US', region: 'MY', quotesCount: 3 },
-      headers: { 'User-Agent': HEADERS['User-Agent'] },
-      timeout: 6000,
-    });
-
-    const quotes = res.data?.quotes ?? [];
-    // Find first result with .KL suffix — that's a Bursa stock
-    const match = quotes.find(q => q.symbol?.endsWith('.KL') && q.exchange === 'KLS');
-    const symbol = match?.symbol ?? null;
-
-    if (symbol) yahooSymbolCache.set(ticker, symbol);
-    return symbol;
-  } catch {
-    return null;
-  }
+  return await getYahooSymbol(ticker);
 }
 
 async function fetchStockData(ticker) {
