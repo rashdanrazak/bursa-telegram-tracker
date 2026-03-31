@@ -28,7 +28,7 @@ cleanup() {
 }
 trap cleanup SIGINT SIGTERM
 
-STOP_HOUR=18  # Stop at 6pm
+STOP_HOUR=17  # Stop at 5pm
 
 # Auto-restart loop — if bot crashes, restart after 10s
 while true; do

@@ -178,14 +178,18 @@ If no stock is identifiable for a headline, skip it entirely.`,
   }
 }
 
-// ── Step 4: Fetch stock data via Yahoo Finance ────────────────────────────────
+// ── Step 4: Fetch stock data via Yahoo Finance (Optional Enrichment) ─────────
 // Bursa stocks on Yahoo use numeric code e.g. 7113.KL, not TOPGLOV.KL
 // We use Yahoo search API to resolve ticker → correct symbol first
+// If resolution fails, gracefully continues without price data (common for newer/delisted stocks)
+// TODO: Future improvement — integrate Bursa Malaysia API for reliable local data
 
 const yahooSymbolCache = new Map();
+const yahooFailureCache = new Set(); // Track failed lookups to avoid repeated API calls
 
 async function resolveYahooSymbol(ticker) {
   if (yahooSymbolCache.has(ticker)) return yahooSymbolCache.get(ticker);
+  if (yahooFailureCache.has(ticker)) return null; // Skip already-failed lookups
 
   try {
     const res = await axios.get('https://query1.finance.yahoo.com/v1/finance/search', {
@@ -199,20 +203,25 @@ async function resolveYahooSymbol(ticker) {
     const match = quotes.find(q => q.symbol?.endsWith('.KL') && q.exchange === 'KLS');
     const symbol = match?.symbol ?? null;
 
-    if (symbol) yahooSymbolCache.set(ticker, symbol);
+    if (symbol) {
+      yahooSymbolCache.set(ticker, symbol);
+    } else {
+      yahooFailureCache.add(ticker);
+    }
     return symbol;
   } catch {
+    yahooFailureCache.add(ticker);
     return null;
   }
 }
 
 async function fetchStockData(ticker) {
   try {
-    // Resolve to correct Yahoo symbol e.g. 7113.KL
+    // Attempt to resolve to correct Yahoo symbol e.g. 7113.KL
+    // If unavailable, returns null gracefully (stock will be included in FOMO analysis without price data)
     const symbol = await resolveYahooSymbol(ticker);
     if (!symbol) {
-      logger.warn(`[FOMO] Could not resolve Yahoo symbol for ${ticker}`);
-      return null;
+      return null; // Graceful degradation — continue without price enrichment
     }
 
     const url = `https://query1.finance.yahoo.com/v8/finance/chart/${symbol}?interval=1d&range=1y`;
@@ -245,7 +254,7 @@ async function fetchStockData(ticker) {
       avgVol:   meta.averageDailyVolume3Month?.toLocaleString() ?? 'N/A',
     };
   } catch (err) {
-    logger.warn(`[FOMO] Stock data fetch failed for ${ticker}:`, err.message);
+    // Silently ignore fetch errors — not critical to core functionality
     return null;
   }
 }
