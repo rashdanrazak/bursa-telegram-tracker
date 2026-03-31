@@ -45,7 +45,7 @@ async function fetchSecurityCode(ticker) {
     code = $('body').attr('data-security-id');
     if (code) {
       codeCache.set(ticker, code);
-      logger.debug(`[BursaLookup] Found code for ${ticker}: ${code}`);
+      logger.info(`[BursaLookup] Found code for ${ticker}: ${code}`);
       return code;
     }
 
@@ -66,14 +66,14 @@ async function fetchSecurityCode(ticker) {
       if (codeMatch) {
         code = codeMatch[1];
         codeCache.set(ticker, code);
-        logger.debug(`[BursaLookup] Found code for ${ticker}: ${code}`);
+        logger.info(`[BursaLookup] Found code for ${ticker}: ${code}`);
         return code;
       }
     }
 
     return null;
   } catch (err) {
-    logger.debug(`[BursaLookup] Failed to fetch code for ${ticker}:`, err.message);
+    logger.warn(`[BursaLookup] Failed to fetch code for ${ticker}:`, err.message);
     return null;
   }
 }
@@ -90,7 +90,7 @@ export async function getYahooSymbol(ticker) {
   
   if (code) {
     const symbol = `${code}.KL`;
-    logger.debug(`[BursaLookup] ${ticker} → ${symbol}`);
+    logger.info(`[BursaLookup] ${ticker} → ${symbol}`);
     return symbol;
   }
 
