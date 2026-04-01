@@ -49,18 +49,19 @@ export async function testTelegram() {
 }
 
 // ── Send alert — notify ALL announcements, AI explains, you decide ────────────
-export async function sendTelegramAlert(ann, result) {
+export async function sendTelegramAlert(ann, result, priceInfo = null) {
   const chatId = process.env.TELEGRAM_CHAT_ID;
   const b = getBot();
 
   if (!b || !chatId) {
     logger.warn('⚠️  Telegram not configured — printing to console instead');
-    printToConsole(ann, result);
+    printToConsole(ann, result, priceInfo);
     return;
   }
 
   const scoreBar   = buildScoreBar(result.score);
   const verdictLine = buildVerdictLine(result.score);
+  const priceSection = priceInfo ? `💰 Current Price: *RM${priceInfo.price.toFixed(2)}* (${priceInfo.yield.toFixed(2)}% yield)\n` : '';
 
   const message = `
 📢 *BURSA DIVIDEND — NEW ANNOUNCEMENT*
@@ -68,7 +69,7 @@ export async function sendTelegramAlert(ann, result) {
 📌 *${escMd(ann.ticker)}* — ${escMd(ann.company)}
 📋 ${escMd(ann.subject)}
 📅 Ann: ${escMd(ann.date)} \\| Ex\\-Date: ${escMd(ann.exDate ?? 'TBC')}
-💵 Dividend: *${escMd(ann.dividendCent ?? 'N/A')} sen*
+${priceSection}💵 Dividend: *${escMd(ann.dividendCent ?? 'N/A')} sen*
 ━━━━━━━━━━━━━━━━━━━━
 *🤖 AI FOMO ANALYSIS*
 ${verdictLine}
@@ -123,9 +124,12 @@ function buildScoreBar(score) {
   return `${filled}${empty}`;
 }
 
-function printToConsole(ann, result) {
+function printToConsole(ann, result, priceInfo = null) {
   console.log('\n' + '='.repeat(50));
   console.log(`📢 ${ann.ticker} — ${ann.dividendCent ?? 'N/A'} sen | Ex: ${ann.exDate ?? 'TBC'}`);
+  if (priceInfo) {
+    console.log(`💰 Current Price: RM${priceInfo.price.toFixed(2)} (${priceInfo.yield.toFixed(2)}% yield)`);
+  }
   console.log(`📋 ${ann.subject}`);
   console.log(`🤖 Score: ${result.score}/10 — ${buildVerdictLine(result.score)}`);
   console.log(`🔥 FOMO: ${result.fomoMagnitude}`);

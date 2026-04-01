@@ -14,6 +14,7 @@ import { loadSeen, saveSeen } from './store.js';
 import { logger } from './logger.js';
 import { startFomoCrawler } from './fomoCrawler.js';
 import { isDemoMode } from './utils/claude.js';
+import { getCurrentPrice, calculateDividendYield } from './price-fetcher.js';
 
 // ── Main dividend job ─────────────────────────────────────────────────────────
 
@@ -33,7 +34,21 @@ async function runAgent() {
       const result = await scoreAnnouncement(ann);
       logger.info(`[Agent] ${ann.ticker} → Score: ${result.score}/10 — ${result.verdict}`);
 
-      await sendTelegramAlert(ann, result);
+      // Fetch current price and calculate dividend yield
+      let priceInfo = null;
+      const priceData = await getCurrentPrice(ann.ticker);
+      if (priceData && ann.dividendCent) {
+        const dividendCent = parseFloat(ann.dividendCent) || 0;
+        const yield_ = calculateDividendYield(dividendCent, priceData.price);
+        priceInfo = {
+          price: priceData.price,
+          currency: priceData.currency,
+          yield: yield_,
+        };
+        logger.info(`[Agent] ${ann.ticker} current price: ${priceData.currency}${priceData.price.toFixed(2)} (${yield_.toFixed(2)}% yield)`);
+      }
+
+      await sendTelegramAlert(ann, result, priceInfo);
     }
 
     await saveSeen(seen);
